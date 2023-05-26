@@ -157,6 +157,9 @@ type ProviderKubernetesDriverConfig struct {
 
 	// PersistentVolumeSize is the size of the persistent volume in GB
 	PersistentVolumeSize string `json:"persistentVolumeSize,omitempty"`
+
+	// TODO(rio): add description and decide if you want an opt-in or opt-out
+	UseLocalRegistryHosting types.StrBool `json:useLocalRegistryHosting`
 }
 
 type ProviderDockerDriverConfig struct {

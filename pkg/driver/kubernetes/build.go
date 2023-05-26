@@ -20,6 +20,7 @@ import (
 	"github.com/moby/buildkit/client"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -56,6 +57,19 @@ func (k *kubernetesDriver) BuildDevContainer(
 	arch, err := k.getClusterArchitecture(ctx)
 	if err != nil {
 		return nil, err
+	}
+
+	// find and use the local registry hosting configmap.
+	// See https://github.com/kubernetes/enhancements/tree/master/keps/sig-cluster-lifecycle/generic/1755-communicating-a-local-registry
+	if k.config.BuildRepository == "" && k.config.UseLocalRegistryHosting != "false" {
+		localRegistry, err := k.getLocalRegistry(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		k.Log.Infof("Detected locally hosted registry: %v", localRegistry)
+
+		k.config.BuildRepository = localRegistry.HostFromClusterNetwork + "/" + "devpod"
 	}
 
 	prebuildHash, err := config.CalculatePrebuildHash(parsedConfig.Config, options.Platform, arch, dockerfileContent, k.Log)
@@ -414,4 +428,31 @@ func (k *kubernetesDriver) helperImage() string {
 	}
 
 	return "busybox"
+}
+
+func (k *kubernetesDriver) getLocalRegistry(ctx context.Context) (localRegistryHostingV1, error) {
+	var localRegistry localRegistryHostingV1
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	command := []string{"get", "configmap", "--namespace", "kube-public", "local-registry-hosting", "--output", "jsonpath={.data.localRegistryHosting\\.v1}"}
+
+	err := k.runCommand(ctx, command, nil, stdout, stderr)
+	if err != nil {
+		return localRegistry, fmt.Errorf("failed checking for local registry hosting configmap: %s %s %w", stdout.String(), stderr.String(), err)
+	}
+
+	if err := yaml.NewDecoder(stdout).Decode(&localRegistry); err != nil {
+		return localRegistry, fmt.Errorf("failed to decode local registry hosting configmap: %w", err)
+	}
+
+	return localRegistry, nil
+}
+
+type localRegistryHostingV1 struct {
+	Host                     string `yaml:"host,omitempty"`
+	HostFromClusterNetwork   string `yaml:"hostFromClusterNetwork,omitempty"`
+	HostFromContainerRuntime string `yaml:"hostFromContainerRuntime,omitempty"`
+	Help                     string `yaml:"help,omitempty"`
 }
